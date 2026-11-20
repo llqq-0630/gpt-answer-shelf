@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>GPT 回答收纳 · 本地演示</title>
+  <link rel="stylesheet" href="/page.css">
+  <style>
+    :root { font: 15px/1.75 "Segoe UI", "Microsoft YaHei", sans-serif; color: #272720; background: #fafaf8; color-scheme: light; --fixture-bubble:#ebebe7; }
+    body { margin: 0; }
+    header { padding: 20px 28px; border-bottom: 1px solid #deded7; background: #fff; }
+    h1 { margin: 0; font-size: 20px; }
+    .hint { color: #6d6b61; font-size: 13px; margin: 6px 0 12px; }
+    header.compact > :not(h1):not(.hint):not(#compact-controls) { display:none !important; }
+    .archive-demo header { position: relative; }
+    .archive-demo #compact-controls { font-size: 12px; padding: 3px 8px; }
+    .archive-demo header.compact #compact-controls { position: absolute; top: 18px; right: 25px; }
+    .archive-demo header.compact h1 { padding-right: 85px; }
+    .archive-demo main > article { overflow-wrap: anywhere; }
+    @media (min-width: 1160px) {
+      .archive-demo main, .archive-demo .composer-inner { box-sizing: border-box; max-width: min(680px, calc(100% - 625px)); margin-left: max(24px, calc((100vw - 1240px) / 2)); }
+    }
+    button { font: inherit; padding: 7px 12px; margin: 3px; border: 1px solid #deded7; border-radius: 8px; background: #fff; cursor: pointer; }
+    main { margin: 24px auto; max-width: 690px; padding: 0 24px 150px; }
+    article { margin: 24px 0; }
+    article[data-turn="user"] { margin-left: 70px; padding: 12px 18px; background: #ebebe7; border-radius: 16px; }
+    [data-message-author-role="user"] { white-space: pre-wrap; overflow-wrap: anywhere; }
+    p { margin: 10px 0; }
+    [class*="MarkdownRoot-"] { font-size:16px; line-height:1.75; }
+    [class*="MarkdownRoot-"] h2 { font-size:20px; line-height:1.4; font-weight:600; margin:24px 0 12px; }
+    .example-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+    .example-grid figure { margin:0; } .example-grid img { display:block; width:100%; border-radius:12px; }
+    .dil-arrow::after { content:"";position:absolute;right:-1px;top:-5px;width:0;height:0;border-top:6px solid transparent;border-bottom:6px solid transparent;border-left:8px solid #18252e; }
+    figcaption { font-size:13px; margin-top:6px; color:#6b6b6b; }
+    [class*="MarkdownRoot-"] pre { font:14px/1.6 Consolas,monospace; padding:12px; background:#f4f4f4; border-radius:10px; }
+    [class*="MarkdownRoot-"] ul, [class*="MarkdownRoot-"] ol { padding-inline-start:28px; margin:12px 0; }
+    [class*="MarkdownRoot-"] table { border-collapse:collapse; width:100%; }
+    [class*="MarkdownRoot-"] th, [class*="MarkdownRoot-"] td { padding:8px 10px; border:1px solid #ddd; }
+    .copy { font-size: 12px; color: #747266; }
+    .composer { position: fixed; bottom: 0; left: 0; right: 0; background: #fafaf8; padding: 14px 24px; border-top: 1px solid #deded7; }
+    .composer-inner { display: flex; gap: 8px; max-width: 720px; margin: auto; align-items: flex-end; }
+    [role="textbox"] { flex: 1; min-width: 0; max-height: 150px; overflow-y: auto; min-height: 50px; padding: 12px; border: 1px solid #deded7; border-radius: 12px; background: #fff; outline-offset: 2px; white-space: pre-wrap; }
+    [role="textbox"]:empty::before { content: "输入一个演示问题"; color: #858375; }
+    #stop { background: #fae6c1; }
+    [hidden] { display: none !important; }
+    #test-state { font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+    :root.dark { color:#ececec; background:#212121; color-scheme:dark; --fixture-bubble:#2f2f2f; }
+    .dark header, .dark button, .dark [role="textbox"] { background:#212121; color:#ececec; border-color:#424242; }
+    .dark .hint, .dark .copy { color:#b4b4b4; }
+    .dark article[data-turn="user"] { background:#2f2f2f; }
+    .dark .composer { background:#212121; border-color:#424242; }
+    body.nested-scroll { display:flex; flex-direction:column; height:100vh; overflow:hidden; }
+    .nested-scroll header { flex:0 0 auto; }
+    .nested-scroll #messages { flex:1; min-height:0; overflow-y:auto; width:100%; box-sizing:border-box; margin:0 auto; padding-top:24px; padding-bottom:180px; }
+    .nested-scroll .composer { position:static; flex:0 0 auto; }
+    @media(max-width:520px) { header { padding:16px; } main { padding:0 16px 150px; } article[data-turn="user"] { margin-left:30px; } .composer { padding:10px; } }
+  </style>
+  <script src="/storage.js"></script>
+  <script src="/tests/fixture.js"></script>
+  <script src="/rich.js" defer></script>
+  <script src="/media.js" defer></script>
+  <script src="/core.js" defer></script>
+  <script src="/messages.js" defer></script>
+  <script src="/navigation.js" defer></script>
+  <script src="/native-view.js" defer></script>
+  <script src="/reading.js" defer></script>
+  <script src="/panel.js" defer></script>
+  <script src="/styles.js" defer></script>
+  <script src="/content.js" defer></script>
+</head>
+<body class="archive-demo">
+  <header class="compact">
+    <h1>GPT 回答收纳 · 本地演示</h1>
+    <p class="hint">在问句旁或回答末尾点「收进侧栏」，再从问句点「查看回答」。这些问答是本地样例。</p>
+    <output id="churn-state"></output>
+    <button id="compact-controls" type="button">测试控制</button>
+    <output id="native-image-state">网站大图打开次数：0</output><output id="preview-rebuild-state"></output>
+    <button id="rerender" type="button">重新渲染网页消息</button>
+    <button id="scroll-tail" type="button">滚动到对话末尾</button>
+    <button id="unload-saved" type="button">卸载一组已收纳的问答</button>
+    <button id="unload-media" type="button">模拟网页卸载图片</button>
+    <button id="lazy-history" type="button">模拟较早问答尚未加载</button><output id="history-state" aria-live="polite"></output>
+    <button id="expire-gallery" type="button">使生成图片链接失效</button><output id="gallery-state" aria-live="polite"></output>
+    <button id="fail-answer" type="button">模拟回答加载失败</button>
+    <button id="restore-answer" type="button">恢复中断或失败的回答</button>
+    <button id="check-startup" type="button">检查扩展加载</button><output id="startup-state" aria-live="polite"></output>
+    <label>消息结构 <select id="structure"><option value="author">消息作者属性</option><option value="turn">文章作者属性</option><option value="markdown">Markdown 与角色标题</option><option value="work">用户诊断中的 MarkdownRoot 结构</option></select></label>
+    <button id="diagnose" type="button">查看页面结构诊断</button><pre id="diagnostic-state" hidden></pre>
+    <button id="other" type="button">切换另一段对话</button>
+    <button id="back" type="button">返回原对话</button>
+    <button id="theme" type="button">切换明暗主题</button>
+    <label><input id="slow" type="checkbox"> 慢速生成</label>
+    <details><summary>测试状态</summary><pre id="test-state"></pre></details>
+  </header>
+  <main id="messages"></main>
+  <div class="composer"><div class="composer-inner">
+    <div id="prompt-textarea" contenteditable="true" role="textbox" aria-label="ChatGPT 演示输入框"></div>
+    <button type="button" data-testid="send-button" id="send">发送</button>
+    <button type="button" data-testid="stop-button" id="stop" aria-label="停止生成" hidden>停止</button>
+  </div></div>
+</body>
+</html>

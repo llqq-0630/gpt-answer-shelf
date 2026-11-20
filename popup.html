@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>GPT 回答收纳</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="brand">GPT 回答收纳 <span id="version"></span></div>
+  <p>在问句旁或回答末尾点「收进侧栏」，随时查看或放回主对话。</p>
+  <button id="open" type="button">打开当前对话的收纳目录</button>
+  <button id="reload" class="secondary" type="button" hidden>刷新当前网页</button>
+  <button id="check" class="secondary" type="button">重新检查加载状态</button>
+  <button id="diagnose" class="secondary" type="button">复制页面诊断（不含聊天正文）</button>
+  <textarea id="diagnostic-report" class="small" rows="7" readonly hidden aria-label="页面结构诊断"></textarea>
+  <p class="small">第一次加载扩展后，请刷新 ChatGPT 网页。收纳记录保存在当前浏览器。</p>
+  <p class="small" id="help" hidden>请在 chatgpt.com 的标签页使用。若刷新后仍未加载：打开扩展管理页，确认本扩展已启用，允许访问 chatgpt.com，并检查“错误”。刷新前请先保存输入框中的草稿。</p>
+  <p id="status" role="status"></p>
+  <script src="popup.js"></script>
+</body>
+</html>

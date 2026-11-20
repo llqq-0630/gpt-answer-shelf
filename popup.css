@@ -1,0 +1,13 @@
+:root { color-scheme: light dark; }
+body { width: 300px; margin: 0; padding: 22px; font: 14px/1.65 ui-sans-serif, system-ui, "Segoe UI", "Microsoft YaHei", sans-serif; background: light-dark(#ffffff, #212121); color: light-dark(#0d0d0d, #ececec); }
+.brand { font-size: 20px; font-weight: 600; }
+.brand span { font-size: 12px; font-weight: 400; padding-left: 8px; color: light-dark(#6b6b6b, #b4b4b4); }
+button { width: 100%; padding: 11px; border: 0; border-radius: 9px; background: light-dark(#0d0d0d, #ececec); color: light-dark(#ffffff, #0d0d0d); font: inherit; cursor: pointer; }
+button:hover { background: light-dark(#363636, #d5d5d5); }
+button:disabled { cursor: default; opacity: .55; }
+.secondary { margin-top: 8px; border: 1px solid light-dark(#e5e5e5, #424242); background: transparent; color: inherit; }
+.secondary:hover { background: light-dark(#f4f4f4, #2f2f2f); }
+[hidden] { display: none !important; }
+.small { font-size: 12px; color: light-dark(#6b6b6b, #b4b4b4); }
+#status { margin-bottom: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+#diagnostic-report { box-sizing: border-box; width: 100%; margin-top: 12px; font: 11px/1.5 monospace; color: inherit; background: transparent; border: 1px solid #8885; border-radius: 6px; }

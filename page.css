@@ -1,0 +1,10 @@
+.gpt-answer-shelf-hidden-turn {
+  display: none !important;
+}
+[data-gpt-answer-shelf-native]::backdrop { background: transparent; pointer-events: none; }
+[data-gpt-answer-shelf-native] [data-gpt-answer-shelf],
+[data-gpt-answer-shelf-native] [data-gpt-sticky-host] { display: none !important; }
+::highlight(gpt-answer-shelf-jump) {
+  background-color: rgba(127, 127, 127, .38);
+  text-decoration: underline;
+}
