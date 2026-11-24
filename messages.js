@@ -3,6 +3,20 @@
   const EXTENSION_UI = '[data-gpt-answer-shelf], [data-gpt-sticky-host]';
   const TURN = '[data-testid^="conversation-turn-"], [data-turn="assistant"], [data-turn="user"], article[data-turn-id]';
   const BODY = '.markdown, .prose, [data-testid="markdown"], [data-testid="assistant-message"], [class*="MarkdownRoot-"]';
+  const USER_BODY = '[data-testid="user-message"], [class*="user-message-bubble"], [class*="UserMessageRoot-"], [class*="UserMessageBubble-"]';
+  const QUESTION_EDIT = [
+    'button[data-testid="edit-turn-action-button"]', 'button[data-testid="edit-message-button"]',
+    'button[aria-label="Edit message"]', 'button[title="Edit message"]',
+    'button[aria-label="编辑消息"]', 'button[title="编辑消息"]'
+  ].join(", ");
+  const MEDIA = 'img,canvas,iframe,video,svg[role="img"]';
+  const ANALYSIS_CONTROL = 'button, [role="button"], [role="tooltip"], a[aria-label], a[title], [data-testid="view-analysis-button"]';
+  const ANALYSIS_LABEL = /^(?:(?:view|show|open)[ -]analysis(?:[ -]button)?|(?:查看|显示)分析)$/i;
+  const ANALYZED_LABEL = /^(?:analyzed|已分析|分析完成)$/i;
+  const QUESTION_MORE = /^(?:show more(?: of (?:the|this|your) message)?|显示更多|展开(?:全部|消息)?)$/i;
+  const ANALYSIS_DISCLOSURE = 'button, [role="button"], summary';
+  const MESSAGE_BODY_OR_MEDIA = [BODY, USER_BODY, MEDIA, '[data-message-author-role="user"]', '[data-message-role="user"]'].join(", ");
+  const MESSAGE_CONTENT = [TURN, BODY, USER_BODY, QUESTION_EDIT, '[data-message-author-role]', '[data-message-role]', MEDIA].join(", ");
   const STATUS = '[role="status"], [aria-live]';
   const PROGRESS = /^(?:thinking|(?:generating|loading)(?: (?:a |an |the )?(?:answer|response|images?))?|(?:正在|还在)(?:思考|生成|加载)(?:回答|图片|内容)?)[.。…]*$/i;
   const TIMING = /^(?:(?:worked|thought) for\s+\d[\d\s.msh]*|(?:已思考|思考了|耗时)\s*\d[\d\s分秒钟小时]*)$/i;
@@ -65,7 +79,8 @@
       const copy = buttons.some(button => button.dataset.testid === "copy-turn-action-button" || /^(?:copy(?: (?:message|response|answer))?|复制(?:消息|回答)?)$/.test(label(button)));
       const feedback = buttons.some(button => /(?:good|bad|like|dislike)[ -]?(?:response|answer|image)|thumbs[ -]?(?:up|down)|(?:good|bad)-response/.test(`${label(button)} ${button.dataset.testid || ""}`) || /^(?:like|dislike|赞|不赞|赞同|不赞同|满意|不满意)$/.test(label(button)));
       const caption = captionRole(turn);
-      const user = caption === "user" || turn.matches('[data-turn="user"], [data-message-author-role="user"], [data-message-role="user"]') || Boolean(turn.querySelector('[data-message-author-role="user"], [data-message-role="user"], [data-testid="user-message"], [class*="user-message-bubble"], [contenteditable="true"]'));
+      const user = caption === "user" || turn.matches(`[data-turn="user"], [data-message-author-role="user"], [data-message-role="user"], ${USER_BODY}`)
+        || Boolean(turn.querySelector(`[data-message-author-role="user"], [data-message-role="user"], ${USER_BODY}, [contenteditable="true"]`));
       const text = C.normalize(messageText(turn));
       const inProgress = PROGRESS.test(text) || turn.matches('[aria-busy="true"], [data-is-streaming="true"]')
         || Boolean(turn.querySelector('[data-is-streaming="true"], [data-message-author-role="assistant"][aria-busy="true"]'));
@@ -108,19 +123,52 @@
     if (cached) textCache.set(el, text);
     return text;
   }
-  function questionBubble(shell, text) {
+  function analysisOnly(el) {
+    if (!el || el.matches('img,canvas,iframe,video') || el.querySelector('img,canvas,iframe,video')) return false;
+    const text = C.normalize(messageText(el)), isControl = el.matches(ANALYSIS_CONTROL);
+    if (!isControl && text && text !== "</>" && !ANALYSIS_LABEL.test(text)) return false;
+    const controls = [...el.querySelectorAll(ANALYSIS_CONTROL)];
+    if (isControl) controls.unshift(el);
+    return controls.some(control => hasLabel(control, ANALYSIS_LABEL));
+  }
+  function hasLabel(control, pattern) {
+    const labels = [control.getAttribute("aria-label"), control.title, control.dataset.testid, control.textContent];
+    const descriptions = control.getAttribute("aria-describedby")?.split(/\s+/) || [];
+    return labels.some(label => pattern.test(C.normalize(label)))
+      || descriptions.some(id => pattern.test(C.normalize(document.getElementById(id)?.textContent)));
+  }
+  function analysisActivity(el) {
+    // An expanded tool step may contain extensive code and results even
+    // though the separate final Markdown body is the answer to archive.
+    if (el.matches(MESSAGE_BODY_OR_MEDIA) || el.querySelector(MESSAGE_BODY_OR_MEDIA)) return false;
+    return el.matches(ANALYSIS_DISCLOSURE) && hasLabel(el, ANALYZED_LABEL)
+      || [...el.querySelectorAll(ANALYSIS_DISCLOSURE)].some(control => hasLabel(control, ANALYZED_LABEL));
+  }
+  function questionBubble(shell, text, followingAnswer) {
     const status = '[role="status"], [role="alert"], [aria-live]';
-    if (!text || shell.matches(status) || shell.querySelector(status)) return null;
+    if (!text || shell.matches(status)) return null;
     const facts = inspectResult(shell);
     if (facts.assistant || facts.feedback) return null;
-    const column = shell.parentElement.getBoundingClientRect();
+    if (captionRole(shell) === "user" || [...shell.querySelectorAll(QUESTION_EDIT)].some(button => !button.closest(BODY))) return shell;
+    if (!followingAnswer || shell.querySelector(status)) return null;
+    const hasMarkdown = shell.matches(BODY) || Boolean(shell.querySelector(BODY));
+    let column = shell.parentElement;
+    while (column && !column.getBoundingClientRect().width) column = column.parentElement;
+    const bounds = column?.getBoundingClientRect();
+    let boxless = false;
     let bubble = shell;
     while (bubble) {
       const rect = bubble.getBoundingClientRect();
       const style = root.getComputedStyle(bubble);
-      const rightAligned = rect.left - column.left > column.right - rect.right + 24;
+      boxless ||= style.display === "contents";
+      const rightAligned = bounds && rect.left - bounds.left > bounds.right - rect.right + 24;
       const colored = style.backgroundColor && !["transparent", "rgba(0, 0, 0, 0)"].includes(style.backgroundColor);
-      if (rect.width && rightAligned && colored && parseFloat(style.borderTopLeftRadius) >= 6) return bubble;
+      const roundedBubble = colored && parseFloat(style.borderTopLeftRadius) >= 6;
+      const plainPrompt = !hasMarkdown && /^(?:pre-wrap|pre-line|break-spaces)$/.test(style.whiteSpace)
+        && !bubble.querySelector("pre,code,table,blockquote,math,img,canvas,iframe,video");
+      // Layout-only wrappers have no box of their own. The prompt text can
+      // still be rendered by a child that preserves the user's line breaks.
+      if (plainPrompt && boxless || rect.width && rightAligned && (roundedBubble || plainPrompt)) return bubble;
       bubble = [...bubble.children].find(child => C.normalize(messageText(child)) === text);
     }
     return null;
@@ -141,9 +189,16 @@
       return hidden.get(el);
     }
     function statusOnly(el) {
-      if (!el.matches(STATUS) || el.querySelector("img,canvas,iframe,video")) return false;
+      if (!el.matches(STATUS) || el.matches(MEDIA) || el.querySelector(MEDIA)) return false;
       const text = C.normalize(messageText(el));
       return !text || TIMING.test(text) || PROGRESS.test(text);
+    }
+    function decoration(el) {
+      if (statusOnly(el) || analysisOnly(el) || analysisActivity(el)) return true;
+      const text = C.normalize(messageText(el));
+      if (text && !TIMING.test(text) && !PROGRESS.test(text)) return false;
+      if (el.matches(MESSAGE_CONTENT) || el.querySelector(MESSAGE_CONTENT)) return false;
+      return !text || !questionBubble(el, text, true);
     }
     const blockOf = el => {
       for (let node = el; node && !node.matches('main, [role="main"]'); node = node.parentElement) {
@@ -151,8 +206,21 @@
       }
       return null;
     };
+    function analysisPart(el) {
+      const turn = el.closest(TURN) || blockOf(el);
+      for (let node = el; node && !node.matches('main, [role="main"]'); node = node.parentElement) {
+        if (analysisOnly(node)) return true;
+        if (C.normalize(messageText(node)) || node.querySelector(MEDIA)) return false;
+        if (node === turn) break;
+        // An empty Markdown renderer can be placed beside the analysis
+        // button within an otherwise substantive assistant turn.
+        if (analysisOnly(node.nextElementSibling) || analysisOnly(node.previousElementSibling)) return true;
+      }
+      return false;
+    }
     function add(el, role, explicit = false, mediaResult = false) {
       if (!el || !roles.has(role) || el.closest(EXTENSION_UI + ', [contenteditable="true"], input, textarea') || inactive(el)) return;
+      if (role === "assistant" && analysisPart(el)) return;
       const status = el.closest(STATUS);
       if (status && statusOnly(status)) return;
       if (items.some(item => item.el === el || item.el.contains(el) || el.contains(item.el))) return;
@@ -164,36 +232,44 @@
       if (items.some(item => turn.contains(item.el))) continue;
       const marked = turn.dataset.turn;
       const role = roles.has(marked) ? marked : captionRole(turn);
-      const userBody = turn.querySelector('[data-testid="user-message"], [class*="user-message-bubble"]');
+      const userBody = turn.querySelector(USER_BODY);
       if (role === "user") add(userBody || turn.querySelector(".whitespace-pre-wrap") || turn, "user", true);
       else if (!roles.has(role) && userBody) add(userBody, "user", true);
       else if (role === "assistant") add(turn.querySelector(BODY) || turn, "assistant", true);
       else add(turn.querySelector(BODY), "assistant");
     }
     // A redesign may keep Markdown bodies and user bubbles without author attributes.
-    for (const el of document.querySelectorAll('main [data-testid="user-message"], main [class*="user-message-bubble"], [role="main"] [data-testid="user-message"], [role="main"] [class*="user-message-bubble"]')) add(el, "user", true);
+    for (const el of document.querySelectorAll(USER_BODY)) {
+      if (!el.parentElement?.closest(BODY) && (el.closest('main, [role="main"]') || blockOf(el))) add(el, "user", true);
+    }
     for (const el of document.querySelectorAll(BODY.split(", ").flatMap(selector => [`main ${selector}`, `[role="main"] ${selector}`]).join(", "))) {
-      if (!el.closest('[data-turn="user"], [data-message-author-role="user"], [data-testid="user-message"], [class*="user-message-bubble"]')) add(el, "assistant");
+      if (!el.closest(`[data-turn="user"], [data-message-author-role="user"], ${USER_BODY}`)) add(el, "assistant");
     }
     for (const el of document.querySelectorAll('[class*="MarkdownRoot-"]')) {
       if (blockOf(el)) add(el, "assistant");
     }
-    // Some pages mark Markdown answers but omit user roles. Look for a question
-    // bubble immediately before a recognized answer in the same message column.
+    // Some pages mark Markdown answers but omit user roles. Inspect their
+    // message column, ignoring timer rows and empty layout gaps between turns.
     const assistantBlocks = new Set(items.filter(item => item.role === "assistant").map(item => blockOf(item.el)).filter(Boolean));
     const blockParents = new Set([...assistantBlocks].map(block => block.parentElement).filter(Boolean));
-    for (const parent of blockParents) for (const shell of parent.children) {
-      if (![...shell.classList].some(name => name.startsWith("block-")) || items.some(item => shell.contains(item.el) || item.el.contains(shell))
-          || shell.closest(EXTENSION_UI + ', [contenteditable="true"]') || inactive(shell) || statusOnly(shell)) continue;
+    for (const parent of blockParents) for (const shell of [...parent.children].reverse()) {
+      if (shell.closest(EXTENSION_UI + ', [contenteditable="true"]') || inactive(shell) || decoration(shell)) continue;
+      const overlapping = items.filter(item => shell.contains(item.el) || item.el.contains(shell));
+      if (overlapping.some(item => item.explicit || item.role !== "assistant" || !shell.contains(item.el))) continue;
       const text = C.normalize(messageText(shell));
       let next = shell.nextElementSibling;
-      while (next && (next.matches(EXTENSION_UI) || inactive(next) || statusOnly(next))) next = next.nextElementSibling;
-      const gallery = next?.matches('[class*="block-"]') && inspectResult(next);
-      if (assistantBlocks.has(next) || gallery?.kind === "image") {
-        const question = questionBubble(shell, text);
-        if (question) { add(question, "user", true); continue; }
+      while (next && (next.matches(EXTENSION_UI) || inactive(next) || decoration(next))) next = next.nextElementSibling;
+      const followingAnswer = assistantBlocks.has(next) || next?.matches('[class*="block-"]') && inspectResult(next).kind === "image";
+      const question = questionBubble(shell, text, followingAnswer);
+      if (question) {
+        // A prompt may use Markdown too. Only replace provisional assistant
+        // matches, keeping author markers and earlier turn boundaries.
+        for (const item of overlapping) items.splice(items.indexOf(item), 1);
+        assistantBlocks.delete(shell);
+        add(question, "user", true);
+        continue;
       }
-      if (text || shell.querySelector("img")) items.push({ el: shell, role: "boundary", explicit: false });
+      if (!overlapping.length && (text || shell.querySelector("img"))) items.push({ el: shell, role: "boundary", explicit: false });
     }
     // A saved question can still be matched exactly after the page changes its layout.
     const savedQuestions = new Set(getNotes().map(note => C.normalize(note.exchanges[0].userText)).filter(Boolean));
@@ -261,7 +337,10 @@
       const occurrence = occurrences.get(fallbackBase) || 0;
       occurrences.set(fallbackBase, occurrence + 1);
       const id = el.dataset.messageId || el.querySelector('[data-message-id]')?.dataset.messageId || turn.dataset.messageId || (turn.dataset.turnId ? `${turn.dataset.turnId}:${role}` : turn.dataset.testid ? `${turn.dataset.testid}:${role}` : `${fallbackBase}:${occurrence}`);
-      const message = { el, contentEl, turn, role, id, text, priorUserText, index, ...(facts && (facts.kind === "image" || mediaResult) ? { kind: "image", mediaKey: facts.mediaKey } : {}) };
+      const collapsed = role === "user" && [...turn.querySelectorAll('button, [role="button"], summary, a')].some(control =>
+        control.getAttribute("aria-expanded") !== "true" && hasLabel(control, QUESTION_MORE));
+      const message = { el, contentEl, turn, role, id, text, priorUserText, index, ...(collapsed ? { collapsed: true } : {}),
+        ...(facts && (facts.kind === "image" || mediaResult) ? { kind: "image", mediaKey: facts.mediaKey } : {}) };
       if (role === "user") priorUserText = text;
       else if (role === "boundary") priorUserText = "";
       return message;
@@ -303,11 +382,10 @@
     return range;
   }
 
-    function invalidate(records, messages) {
+    function invalidate(records) {
       for (const record of records) {
-        const target = record.target.nodeType === Node.ELEMENT_NODE ? record.target : record.target.parentElement;
-        for (const message of messages) if (target && (message.el === target || message.el.contains(target))) textCache.delete(message.el);
-        for (const message of messages) if (target && message.turn && (message.turn === target || message.turn.contains(target) || target.contains(message.turn))) textCache.delete(message.turn);
+        let node = record.target.nodeType === Node.ELEMENT_NODE ? record.target : record.target.parentElement;
+        for (; node; node = node.parentElement) textCache.delete(node);
       }
     }
     function roots(messages) {
@@ -329,7 +407,13 @@
       for (const message of messages) visit(message.contentEl || message.el);
       return found;
     }
-    return { read: readMessages, range: textRange, invalidate, roots, captureResult, canArchive: message => canArchiveReply(message, inspectResult(message.turn), C) };
+    function matchesQuestion(message, text) {
+      return message.el.isConnected && message.turn.contains(message.el)
+        && !message.el.closest('[hidden], [inert], [aria-hidden="true"]')
+        && C.sameText(messageText(message.el), text);
+    }
+    return { read: readMessages, range: textRange, invalidate, roots, captureResult, matchesQuestion,
+      canArchive: message => canArchiveReply(message, inspectResult(message.turn), C) };
   }
   const api = { create, classifyImageReply, canArchiveReply, imageResource };
   root.GPTStickyMessages = api;

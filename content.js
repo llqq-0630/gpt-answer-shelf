@@ -1,6 +1,6 @@
 (async function () {
   "use strict";
-  const SCRIPT_VERSION = "0.2.9";
+  const SCRIPT_VERSION = "0.2.15";
   if (globalThis.__gptAnswerShelfLoaded) return;
   globalThis.__gptAnswerShelfLoaded = true;
   const runtime = globalThis.__gptAnswerShelf = { status: "starting", error: "" };
@@ -27,7 +27,7 @@
   const state = {
     notes: new Map(), key: C.conversationKey(location.href), active: null, query: "",
     messages: [], questionActions: new Map(), answerActions: new Map(), saving: new Set(), hiddenTurns: new Set(),
-    hideLinked: true, wide: false, timer: null, sidebarSignature: "", nativeAnswer: null
+    hideLinked: true, wide: false, timer: null, sidebarSignature: "", nativeAnswer: null, recentArchive: null, waitingForCompletion: false
   };
   const conversation = () => C.conversationKey(location.href);
   const currentNotes = () => [...state.notes.values()].filter(note => note.conversation === state.key && C.isArchive(note) && !note.deletedAt);
@@ -105,8 +105,9 @@
     onOpenMedia: (event, turn) => media.openNative(event, turn), onPromote: () => media.raise()
   });
   const reading = globalThis.GPTStickyReading.create({ getConversation: conversation, resolve: note => {
-    let question = C.questionForEntry(entryOf(note), state.messages);
-    if (!question?.el.isConnected) question = C.questionForEntry(entryOf(note), readMessages());
+    const options = optionsForNote(note);
+    let question = C.questionForEntry(entryOf(note), state.messages, options);
+    if (!question?.el.isConnected) question = C.questionForEntry(entryOf(note), readMessages(), options);
     return question ? { node: question.turn, rect: () => question.el.getBoundingClientRect() } : null;
   } });
   const panelPosition = globalThis.GPTStickyPanel.create({ panel, handle: $(".panel-head > .row.between"), onMove: () => nativeView.layout() });
@@ -165,7 +166,6 @@
     state.active = null;
     state.sidebarSignature = "";
     hideTurns();
-    navigation.trimLandingSpace();
   }
 
   function acceptNote(note) {
@@ -185,9 +185,13 @@
     schedule();
     return response.note;
   }
-  async function restoreAnswer(noteId) {
+  function optionsForNote(note) {
+    return state.recentArchive?.id === note.id ? state.recentArchive.anchor.options : undefined;
+  }
+  async function restoreAnswer(noteId, anchor) {
     const note = state.notes.get(noteId);
     if (!C.isArchive(note) || note.deletedAt || !C.isArchived(entryOf(note)) || note.conversation !== conversation()) return;
+    navigation.cancel({ restorePosition: false });
     const updated = structuredClone(note);
     const entry = entryOf(updated);
     entry.placement = "main";
@@ -195,8 +199,9 @@
     delete entry.answerDocument;
     await saveNote(updated);
     if (note.conversation !== conversation()) return;
+    if (state.recentArchive?.id === noteId) state.recentArchive = null;
     closePanel({ restorePosition: false });
-    const result = await navigation.jump(note, entry);
+    const result = await navigation.jump(note, entry, anchor ? { anchor } : undefined);
     historyToast = "";
     if (note.conversation !== conversation()) return;
     if (result.code === "located" || result.code === "cancelled") {
@@ -204,7 +209,7 @@
       return;
     }
     toast("已放回主对话。原问答暂未定位。", button("查找原问答", async () => {
-      const located = await navigation.jump(note, entry, { searchHistory: true });
+      const located = await navigation.jump(note, entry, { searchHistory: true, alignQuestion: true, anchor });
       historyToast = "";
       if (note.conversation === conversation()) toast(located.message);
     }));
@@ -213,7 +218,7 @@
   function linkedAnswers(messages) {
     const linked = new Map();
     for (const note of currentNotes()) {
-      const entry = entryOf(note), pair = C.findLinkedPair(entry, messages);
+      const entry = entryOf(note), pair = C.findLinkedPair(entry, messages, optionsForNote(note));
       if (!pair) continue;
       const current = linked.get(pair.answer);
       if (!current || C.isArchived(entry)) linked.set(pair.answer, note);
@@ -226,20 +231,25 @@
     if (!answer || answer.turn.contains(question.turn) || C.isLoadError(answer.text)) return null;
     return answer.text || answer.kind === "image" ? answer : null;
   }
-  function streamingAnswer(messages) {
-    const latest = messages.findLast(message => message.role === "user" || message.role === "assistant");
-    if (latest?.role !== "assistant") return null;
+  function hasActiveStopControl() {
     const generic = 'button[aria-label="Stop"], button[aria-label="停止"]';
     const controls = 'button[data-testid="stop-button"], button[aria-label="Stop generating"], button[aria-label="Stop streaming"], button[aria-label="停止生成"], button[aria-label="停止回答"], ' + generic;
-    const stopping = [...document.querySelectorAll(controls)].some(node => {
+    return [...document.querySelectorAll(controls)].some(node => {
+      if (node.disabled || node.getAttribute("aria-disabled") === "true") return false;
       if (!node.getClientRects().length || node.closest('[hidden], [inert], [aria-hidden="true"]')) return false;
       const style = getComputedStyle(node);
-      if (style.visibility !== "visible" || style.opacity === "0") return false;
+      if (style.visibility !== "visible") return false;
+      for (let element = node; element; element = element.parentElement) {
+        if (getComputedStyle(element).opacity === "0") return false;
+      }
       if (!node.matches(generic) || node.dataset.testid === "stop-button") return true;
       return Boolean(node.closest('form, [data-testid="composer"], [data-testid="composer-container"], .composer')
         ?.querySelector('[contenteditable="true"], textarea'));
     });
-    return stopping ? latest : null;
+  }
+  function streamingAnswer(messages) {
+    const latest = messages.findLast(message => message.role === "user" || message.role === "assistant");
+    return latest?.role === "assistant" && hasActiveStopControl() ? latest : null;
   }
   async function useQuestionAction(expected, { alignQuestion = false } = {}) {
     const key = state.key;
@@ -276,25 +286,28 @@
       id: existing ? entryOf(existing).id : crypto.randomUUID(),
       question: user.text, userText: user.text, answer: answer.text, answerDocument,
       userMessageId: user.id, answerMessageId: answer.id, placement: "sidebar", status: "saved", createdAt,
+      ...(latest.user.collapsed ? { userTextCollapsed: true } : {}),
       ...(answer.kind === "image" ? { responseKind: "image", mediaKey: answer.mediaKey } : {})
     };
     if (!C.hasAnswer(entry)) throw new Error("回答尚未保存成功。");
-    if (C.findLinkedPair(entry, latest.messages)?.answer !== latest.answer) {
+    const anchor = navigation.capturePair(latest.user, latest.answer, latest.messages);
+    if (C.findLinkedPair(entry, latest.messages, anchor.options)?.answer !== latest.answer) {
       throw new Error("当前网页有重复问答，暂时无法准确收纳这一条。");
     }
     const id = existing?.id || ["archive", C.hash(user.id), C.hash(answer.id), C.hash(user.text), C.hash(answer.text + (answer.mediaKey || ""))].join(":");
     const previous = state.notes.get(id);
     const note = { schema: 1, mode: "archive", id, conversation: key, createdAt: existing?.createdAt || createdAt,
       updatedAt: createdAt, deletedAt: null, exchanges: [entry] };
-    const nearPair = state.hideLinked && (navigation.isVisible(latest.user.el)
+    const nearPair = !alignQuestion && state.hideLinked && (navigation.isVisible(latest.user.el)
       || navigation.isVisible(latest.answer.turn) || navigation.isVisible(latest.answer.el));
     await saveNote(note, { restore: Boolean(previous?.deletedAt), expectedRevision: S.revision(existing || (previous?.deletedAt ? previous : null)) });
     if (key !== conversation()) return;
+    state.recentArchive = { id, anchor };
     sync();
-    toast("回答已收进侧栏。", button("撤销", () => restoreAnswer(id)));
-    const mountedAnswer = C.storedAnswer(entry, state.messages);
-    if (nearPair && state.hideLinked && (state.hiddenTurns.has(mountedAnswer?.turn) || alignQuestion && !mountedAnswer)) {
-      navigation.jump(note, entry, { questionOnly: true, alignQuestion });
+    toast("回答已收进侧栏。", button("撤销", () => restoreAnswer(id, anchor)));
+    const mountedAnswer = C.storedAnswer(entry, state.messages, anchor.options);
+    if (alignQuestion || nearPair && state.hiddenTurns.has(mountedAnswer?.turn)) {
+      navigation.jump(note, entry, { questionOnly: true, alignQuestion, anchor });
     }
   }
   async function activateArchiveAction(pair, options) {
@@ -333,8 +346,10 @@
   }
   function renderArchiveActions() {
     const questions = new Map(), footers = new Map();
+    const streaming = state.key ? streamingAnswer(state.messages) : null;
+    state.waitingForCompletion = Boolean(streaming);
     if (state.key) {
-      const linked = linkedAnswers(state.messages), streaming = streamingAnswer(state.messages);
+      const linked = linkedAnswers(state.messages);
       for (const user of state.messages) {
         if (user.role !== "user") continue;
         const answer = answerForQuestion(user, state.messages);
@@ -354,7 +369,7 @@
     if (state.hideLinked) {
       const questions = state.messages.filter(message => message.role === "user");
       for (const note of archiveNotes()) {
-        const answer = C.storedAnswer(entryOf(note), state.messages);
+        const answer = C.storedAnswer(entryOf(note), state.messages, optionsForNote(note));
         if (answer && !questions.some(question => answer.turn.contains(question.turn))) hidden.add(answer.turn);
       }
     }
@@ -369,10 +384,10 @@
     if (panel.hidden) return;
     const note = notes.find(item => item.id === state.active);
     if (!note) state.active = null;
-    const positions = new Map(note ? [] : notes.map(item => [item.id, C.questionForEntry(entryOf(item), state.messages)?.index ?? Infinity]));
+    const positions = new Map(note ? [] : notes.map(item => [item.id, C.questionForEntry(entryOf(item), state.messages, optionsForNote(item))?.index ?? Infinity]));
     if (!note) notes.sort((a, b) => positions.get(a.id) - positions.get(b.id) || a.createdAt - b.createdAt);
     const entry = note && entryOf(note);
-    const answer = entry && C.storedAnswer(entry, state.messages);
+    const answer = entry && C.storedAnswer(entry, state.messages, optionsForNote(note));
     const native = answer && state.hiddenTurns.has(answer.turn) ? answer : null;
     const signature = [state.key, state.active, state.query, ui.host.dataset.theme, state.hideLinked,
       note ? note.updatedAt : notes.map(item => item.id + ":" + item.updatedAt).join("|")].join(":");
@@ -493,11 +508,12 @@
   const observer = new MutationObserver(records => {
     const nativeRecords = records.filter(record => !nativeView.isOwnMutation(record) && !record.target.closest?.(HOST));
     if (!nativeRecords.length) return;
-    reader.invalidate(nativeRecords, state.messages);
+    reader.invalidate(nativeRecords);
+    navigation.checkLanding();
     schedule();
   });
   const observation = { subtree: true, childList: true, characterData: true, attributes: true,
-    attributeFilter: ["class", "style", "hidden", "inert", "role", "src", "srcset", "alt", "aria-label", "aria-hidden", "aria-busy", "data-testid", "data-theme", "data-is-streaming", "data-message-author-role", "data-message-role", "data-turn"] };
+    attributeFilter: ["class", "style", "hidden", "inert", "role", "src", "srcset", "alt", "title", "disabled", "aria-label", "aria-describedby", "aria-hidden", "aria-disabled", "aria-busy", "aria-expanded", "data-testid", "data-theme", "data-is-streaming", "data-message-author-role", "data-message-role", "data-message-id", "data-turn", "data-turn-id"] };
   let roots = new Set();
   function mediaLoaded(event) {
     if (event.target.matches?.("img,iframe") && !event.target.closest(HOST)) schedule();
@@ -515,6 +531,7 @@
     const key = conversation();
     if (key !== state.key) {
       navigation.cancel({ restorePosition: false });
+      state.recentArchive = null;
       closePanel({ restorePosition: false });
       state.key = key;
       state.query = "";
@@ -524,13 +541,17 @@
     observe();
     theme(ui.host);
     hideTurns();
-    navigation.trimLandingSpace();
     renderArchiveActions();
     renderSidebar();
     nativeView.layout();
     reading.pin();
+    navigation.checkLanding();
   }
-  setInterval(() => { if (conversation() !== state.key) schedule(); }, 700);
+  setInterval(() => {
+    // A CSS transition can hide the Stop button without a DOM mutation once
+    // the response finishes. Only check the control while a reply is waiting.
+    if (conversation() !== state.key || state.waitingForCompletion && !document.hidden && !hasActiveStopControl()) schedule();
+  }, 700);
   window.addEventListener("popstate", schedule);
   window.addEventListener("resize", () => { if (!panel.hidden) positionCard(); schedule(); });
   sync();
@@ -548,7 +569,7 @@
   runtime.diagnose = () => ({
     version: SCRIPT_VERSION, host: location.hostname, ...runtime.inspect(),
     archivedCount: archiveNotes().length, hiddenCount: state.hiddenTurns.size, nativeViews: nativeView.count,
-    structures: Object.fromEntries(['[data-message-author-role]', '[data-turn]', 'article', '[class*="MarkdownRoot-"]'].map(selector => [selector, document.querySelectorAll(selector).length])),
+    structures: Object.fromEntries(['[data-message-author-role]', '[data-message-role]', '[data-turn]', 'article', '[class*="MarkdownRoot-"]', '[class*="block-"]'].map(selector => [selector, document.querySelectorAll(selector).length])),
     navigation: navigation.diagnostic()
   });
   runtime.status = "ready";

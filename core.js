@@ -6,6 +6,8 @@
   const text = value => typeof value === "string" ? value : "";
   const BACKUP_MAX_BYTES = 64 * 1024 * 1024;
   const isNativeId = id => Boolean(id && !id.startsWith("fallback:") && !/^conversation-turn(?:-|:|$)/.test(id));
+  const nativeIdMatches = (saved, current) => isNativeId(saved) && saved === current;
+  const compatibleId = (saved, current) => !isNativeId(saved) || !isNativeId(current) || saved === current;
   const isArchive = note => Boolean(note?.schema === 1 && note.mode === "archive"
     && Array.isArray(note.exchanges) && note.exchanges.length === 1
     && note.exchanges[0] && typeof note.exchanges[0] === "object");
@@ -45,31 +47,56 @@
       ? message.kind === "image" && message.mediaKey === entry.mediaKey
       : message.kind !== "image";
   }
-  function findLinkedPair(entry, messages) {
-    if (!normalize(entry?.userText)) return null;
-    const pairs = messages.filter(message => message.role === "user" && sameText(message.text, entry.userText))
+  function findLinkedPair(entry, messages, { matchFallback } = {}) {
+    const pairs = questionsForEntry(entry, messages, { allowPreview: true })
       .map(user => ({ user, answer: responseAfter(user, messages) }))
-      .filter(pair => pair.answer && matchesAnswer(entry, pair.answer));
-    const native = pairs.find(pair => isNativeId(pair.user.id) && isNativeId(pair.answer.id)
-      && pair.user.id === entry.userMessageId && pair.answer.id === entry.answerMessageId);
-    return native || (pairs.length === 1 ? pairs[0] : null);
+      .filter(pair => pair.answer && matchesAnswer(entry, pair.answer)
+        && compatibleId(entry.answerMessageId, pair.answer.id));
+    const native = pairs.find(pair => nativeIdMatches(entry.userMessageId, pair.user.id)
+      || nativeIdMatches(entry.answerMessageId, pair.answer.id));
+    if (native) return native;
+    const eligible = matchFallback ? pairs.filter(pair => matchFallback(pair, messages)) : pairs;
+    return eligible.length === 1 ? eligible[0] : null;
   }
-  function questionForEntry(entry, messages) {
-    if (!normalize(entry?.userText)) return null;
-    const users = messages.filter(message => message.role === "user" && sameText(message.text, entry.userText));
-    const native = users.find(message => isNativeId(message.id) && message.id === entry.userMessageId);
-    // Identical wording can belong to an older turn when only part of the
-    // conversation is loaded. Require a native ID or the complete saved pair.
-    return native || findLinkedPair(entry, messages)?.user || null;
+  const previewPrefix = value => value
+    .replace(/\s+(?:show more(?: of (?:the|this|your) message)?|显示更多|展开(?:全部|消息)?)$/i, "")
+    .replace(/\s*(?:…|\.{3})$/, "").trimEnd();
+  function questionsForEntry(entry, messages, { allowPreview = false } = {}) {
+    const saved = normalize(entry?.userText);
+    if (!saved) return [];
+    return messages.filter(message => {
+      if (message.role !== "user" || !compatibleId(entry.userMessageId, message.id)) return false;
+      const current = normalize(message.text);
+      if (current === saved) return true;
+      if (!allowPreview || !current) return false;
+      // A folded prompt is used only with an identified turn or a matching
+      // complete answer, never as a standalone text match.
+      const prefix = message.collapsed && previewPrefix(current);
+      const savedPrefix = entry.userTextCollapsed && previewPrefix(saved);
+      return Boolean(prefix && saved.startsWith(prefix) || savedPrefix && current.startsWith(savedPrefix));
+    });
   }
-  function storedAnswer(entry, messages) {
+  function questionForEntry(entry, messages, options) {
+    const users = questionsForEntry(entry, messages, { allowPreview: true });
+    const native = users.find(message => nativeIdMatches(entry.userMessageId, message.id));
+    if (native) return native;
+    // A confirmed live slot can survive a redraw of the answer. Otherwise
+    // identical wording alone cannot identify a question in a partial page.
+    const scoped = options?.matchQuestion && users.filter(options.matchQuestion);
+    if (scoped?.length === 1) return scoped[0];
+    return findLinkedPair(entry, messages, options)?.user || null;
+  }
+  function storedAnswer(entry, messages, options) {
     if (!entry) return null;
-    const pair = findLinkedPair(entry, messages);
+    const pair = findLinkedPair(entry, messages, options);
     if (pair) return pair.answer;
     const candidates = messages.filter(message => message.role === "assistant" && matchesAnswer(entry, message)
-      && (!normalize(message.priorUserText) || sameText(message.priorUserText, entry.userText)));
-    const native = isNativeId(entry.answerMessageId) && candidates.find(message => message.id === entry.answerMessageId);
-    return native || (entry.responseKind === "image" && entry.mediaKey && candidates.length === 1 ? candidates[0] : null);
+      && compatibleId(entry.answerMessageId, message.id));
+    const live = options?.matchAnswer && candidates.find(options.matchAnswer);
+    if (live) return live;
+    const withQuestion = candidates.filter(message => !normalize(message.priorUserText) || sameText(message.priorUserText, entry.userText));
+    const native = withQuestion.find(message => nativeIdMatches(entry.answerMessageId, message.id));
+    return native || (!options?.matchFallback && entry.responseKind === "image" && entry.mediaKey && withQuestion.length === 1 ? withQuestion[0] : null);
   }
   function sanitizeNote(raw) {
     if (!isArchive(raw) || !/^\w[\w:-]{0,160}$/.test(raw.id || "") || !/^(c|share):[\w-]{1,160}$/.test(raw.conversation || "")) {
@@ -91,6 +118,7 @@
       exchanges: [{
         id: clip(item.id, 200), question: text(item.question) || userText, userText, answer,
         userMessageId: clip(item.userMessageId, 200), answerMessageId: clip(item.answerMessageId, 200),
+        ...(item.userTextCollapsed === true ? { userTextCollapsed: true } : {}),
         ...(answerDocument ? { answerDocument } : {}),
         ...(image ? { responseKind: "image", mediaKey: item.mediaKey } : {}),
         placement: item.placement === "sidebar" ? "sidebar" : "main",
@@ -98,7 +126,7 @@
       }]
     };
   }
-  const api = { BACKUP_MAX_BYTES, normalize, sameText, clip, hash, conversationKey, isArchive, hasAnswer, isArchived, isLoadError, questionForEntry, responseAfter, findLinkedPair, storedAnswer, sanitizeNote };
+  const api = { BACKUP_MAX_BYTES, normalize, sameText, isNativeId, compatibleId, clip, hash, conversationKey, isArchive, hasAnswer, isArchived, isLoadError, questionsForEntry, questionForEntry, responseAfter, findLinkedPair, storedAnswer, sanitizeNote };
   root.GPTStickyCore = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(globalThis);

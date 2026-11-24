@@ -11,7 +11,7 @@
     setTimeout(() => { render(); document.getElementById("preview-rebuild-state").textContent = "预览期间网页消息已重建"; }, 350);
   }, { capture: true });
   let store = JSON.parse(localStorage.getItem(fixtureKey("store")) || "{}");
-  const installedVersion = "0.2.9";
+  const installedVersion = "0.2.15";
   const listeners = [];
   const messageListeners = [];
   globalThis.chrome = {
@@ -279,6 +279,15 @@
       const copy = document.createElement("button"); if (work) copy.setAttribute("aria-label", "Copy message"); else copy.dataset.testid = "copy-turn-action-button"; copy.className = "copy"; copy.textContent = "复制回答"; article.append(copy);
       copy.onclick = () => { copy.dataset.activated = String(Number(copy.dataset.activated || 0) + 1); copy.setAttribute("title", "原生按钮已响应"); };
     }
+    if (message.done && message.role === "assistant" && params.get("analysis-footer") === "1") {
+      const analysis = document.createElement("div"), blank = document.createElement("div"), control = document.createElement("button");
+      blank.className = "MarkdownRoot-Analysis";
+      control.type = "button";
+      control.setAttribute("aria-label", "View analysis");
+      control.textContent = "</>";
+      analysis.append(blank, control);
+      article.append(analysis);
+    }
     if (new URLSearchParams(location.search).get("native-test") === "1") for (const image of article.querySelectorAll("img")) image.addEventListener("click", () => showSiteImage(image));
     domNodes.set(message.id, { turn: article, body: text });
     return article;
@@ -289,9 +298,11 @@
     if (params.get("footer-edge") === "1" && active === "demo") {
       const status = document.createElement("div");
       status.className = "block-BQZwFn";
-      status.setAttribute("role", "status");
       status.textContent = "Worked for 3s";
       domNodes.get("a1").turn.before(status);
+      const announcement = status.cloneNode(true);
+      announcement.setAttribute("role", "status");
+      domNodes.get("a2").turn.before(announcement);
       const alternate = renderMessage({ id: "hidden-answer", role: "assistant", paragraphs: ["未选中的分支回答。"], done: true });
       alternate.style.display = "none";
       domNodes.get("a2").turn.after(alternate);

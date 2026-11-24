@@ -36,6 +36,9 @@ function fixture(options = {}) {
     navigation: {
       isVisible: () => Boolean(options.nearPair),
       cancel() {},
+      capturePair(question, answer) {
+        return { question, options: { matchFallback: pair => pair.user.el === question.el || pair.answer.el === answer.el } };
+      },
       async jump(note, entry, optionsForJump) {
         jumped.push([note.id, entry.userText, optionsForJump]);
         return { code: options.restoreCode || "located", message: "已定位原问答。" };
@@ -60,6 +63,11 @@ function fixture(options = {}) {
   messages.push(first.user, first.answer, second.user, second.answer);
   return { context, state, area, messages, first, second, opened, jumped, notices };
 }
+test("a lingering disabled stop control does not block the completed answer", () => {
+  const control = { disabled: true, getAttribute: () => "true" };
+  const { context, messages } = fixture({ document: { querySelectorAll: () => [control] } });
+  assert.equal(context.streamingAnswer(messages), null);
+});
 test("old turns without completion controls archive independently and open the exact stored answer", async () => {
   const { context, state, first, second, opened } = fixture();
   await context.useQuestionAction(second);
@@ -99,7 +107,7 @@ test("restoring one answer releases its snapshot and leaves the other answer arc
 });
 
 test("the answer footer aligns its own question after collapsing the answer", async () => {
-  const { context, state, second, jumped } = fixture({ nearPair: true });
+  const { context, state, second, jumped } = fixture();
   await context.activateArchiveAction(second, { alignQuestion: true });
   const [note] = state.notes.values();
   assert.equal(second.answer.turn.classList.contains(HIDDEN), true);
@@ -107,7 +115,19 @@ test("the answer footer aligns its own question after collapsing the answer", as
   assert.equal(jumped[0][0], note.id);
   assert.equal(jumped[0][2].questionOnly, true);
   assert.equal(jumped[0][2].alignQuestion, true);
+  assert.equal(jumped[0][2].anchor.question, second.user);
   assert.equal(jumped[0][2].searchHistory, undefined);
+});
+test("undo and its history lookup keep the same footer anchor", async () => {
+  const { context, second, jumped, notices } = fixture({ restoreCode: "question-not-found" });
+  await context.activateArchiveAction(second, { alignQuestion: true });
+  const anchor = jumped[0][2].anchor, undo = notices.at(-1).action;
+  assert.equal(undo.label, "撤销");
+  await undo.action();
+  assert.equal(jumped[1][2].anchor, anchor);
+  await notices.at(-1).action.action();
+  assert.equal(jumped[2][2].anchor, anchor);
+  assert.equal(jumped[2][2].searchHistory, true);
 });
 
 test("a pending scroll adjustment does not block opening the answer just archived", async () => {
@@ -138,6 +158,7 @@ test("an unloaded restore only starts a history search when the user clicks the 
   assert.equal(retry.label, "查找原问答");
   await retry.action();
   assert.equal(jumped[1][2].searchHistory, true);
+  assert.equal(jumped[1][2].alignQuestion, true);
 });
 
 test("an answer replaced during snapshot capture is left visible", async () => {

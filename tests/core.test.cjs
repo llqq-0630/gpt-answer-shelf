@@ -25,10 +25,43 @@ test("the same question and answer in two native turns retain their own identiti
   assert.equal(C.findLinkedPair(entry, ambiguous), null);
   assert.equal(C.questionForEntry(entry, ambiguous), null);
 });
+test("an identical earlier pair with conflicting native IDs is not the saved turn", () => {
+  const earlier = pair(2);
+  assert.equal(C.findLinkedPair(entry, earlier), null);
+  assert.equal(C.questionForEntry(entry, earlier), null);
+  assert.equal(C.storedAnswer(entry, earlier), null);
+});
 
 test("an unambiguous pair can rebind after its fallback DOM IDs change", () => {
   const [user, answer] = pair(1).map((item, index) => ({ ...item, id: "fallback:new:" + index }));
   assert.deepEqual(C.findLinkedPair(entry, [user, answer]), { user, answer });
+});
+test("a folded preview matches only with the right live scope or the full answer", () => {
+  const saved = { ...entry, userText: "这是很长的日志前缀。原始问句还有很多行。", userMessageId: "fallback:full",
+    answerMessageId: "fallback:answer" };
+  const folded = message("fallback:folded", "user", "这是很长的日志前缀。… Show more", { collapsed: true });
+  const answer = message("fallback:answer", "assistant", saved.answer);
+  assert.equal(C.questionForEntry(saved, [folded]), null);
+  assert.equal(C.storedAnswer(saved, [folded, answer]), answer);
+  assert.equal(C.storedAnswer(saved, [{ ...folded, collapsed: false }, answer]), null);
+  const other = [{ ...folded, id: "fallback:another" }, { ...answer, id: "fallback:another-answer" }];
+  assert.equal(C.storedAnswer(saved, [...other, folded, answer]), null);
+});
+test("a prompt archived while folded can expand without restoring its answer", () => {
+  const saved = C.sanitizeNote({ ...note, exchanges: [{ ...entry, userText: "日志的可见前缀…", userTextCollapsed: true,
+    userMessageId: "fallback:preview", answerMessageId: "fallback:answer" }] }).exchanges[0];
+  const expanded = message("fallback:expanded", "user", "日志的可见前缀和额外行。");
+  const answer = message("fallback:answer", "assistant", saved.answer);
+  assert.equal(saved.userTextCollapsed, true);
+  assert.equal(C.storedAnswer(saved, [expanded, answer]), answer);
+});
+test("the verified live answer survives unloading its question while older turns remain", () => {
+  const saved = { ...entry, userMessageId: "fallback:q", answerMessageId: "fallback:a" };
+  const live = message("fallback:rebound", "assistant", saved.answer, { priorUserText: "上一条问句" });
+  const older = message("fallback:older", "assistant", saved.answer, { priorUserText: "上一条问句" });
+  const options = { matchAnswer: candidate => candidate === live };
+  assert.equal(C.storedAnswer(saved, [older, live], options), live);
+  assert.equal(C.storedAnswer(saved, [older, { ...live, text: "新的回答" }], options), null);
 });
 
 test("an unloaded answer still permits locating its question by full text", () => {
