@@ -69,6 +69,10 @@ reloadButton.addEventListener("click", async () => {
   finally { reloadButton.disabled = false; }
 });
 document.getElementById("check").addEventListener("click", checkPage);
+document.getElementById("settings").addEventListener("click", async () => {
+  try { await chrome.runtime.openOptionsPage(); window.close(); }
+  catch { status.textContent = "暂时无法打开存储设置，请从浏览器的扩展详情页打开。"; }
+});
 document.getElementById("diagnose").addEventListener("click", async () => {
   const reportBox = document.getElementById("diagnostic-report");
   try {

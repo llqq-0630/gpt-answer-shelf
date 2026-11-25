@@ -11,7 +11,8 @@
   const isArchive = note => Boolean(note?.schema === 1 && note.mode === "archive"
     && Array.isArray(note.exchanges) && note.exchanges.length === 1
     && note.exchanges[0] && typeof note.exchanges[0] === "object");
-  const hasAnswer = entry => !isLoadError(entry.answer) && Boolean(normalize(entry.answer) || root.GPTStickyRich?.hasContent(entry.answerDocument));
+  const hasAnswer = entry => !isLoadError(entry.answer) && Boolean(normalize(entry.answer)
+    || entry.hasStoredDocument === true || root.GPTStickyRich?.hasContent(entry.answerDocument));
   const isArchived = entry => Boolean(entry && entry.placement === "sidebar" && hasAnswer(entry));
 
   function hash(value) {

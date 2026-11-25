@@ -1,6 +1,6 @@
 (async function () {
   "use strict";
-  const SCRIPT_VERSION = "0.2.15";
+  const SCRIPT_VERSION = "0.3.0";
   if (globalThis.__gptAnswerShelfLoaded) return;
   globalThis.__gptAnswerShelfLoaded = true;
   const runtime = globalThis.__gptAnswerShelf = { status: "starting", error: "" };
@@ -20,12 +20,12 @@
   const C = globalThis.GPTStickyCore;
   const R = globalThis.GPTStickyRich;
   const S = globalThis.GPTStickyStorage;
-  const PREFIX = S.PREFIX;
   const PREFS = "gpt-sticky:prefs";
   const HOST = "[data-gpt-answer-shelf]";
   const HIDDEN = "gpt-answer-shelf-hidden-turn";
   const state = {
-    notes: new Map(), key: C.conversationKey(location.href), active: null, query: "",
+    notes: new Map(), key: C.conversationKey(location.href), active: null, query: "", detail: null,
+    storageLoading: false, storageError: "", exportProgress: null,
     messages: [], questionActions: new Map(), answerActions: new Map(), saving: new Set(), hiddenTurns: new Set(),
     hideLinked: true, wide: false, timer: null, sidebarSignature: "", nativeAnswer: null, recentArchive: null, waitingForCompletion: false
   };
@@ -147,6 +147,7 @@
   function openPanel(noteId = null) {
     navigation.cancel({ restorePosition: false });
     reading.release({ restorePosition: false });
+    if (state.active !== noteId) state.detail = null;
     state.active = noteId;
     if (noteId) reading.capture(state.notes.get(noteId));
     panel.hidden = false;
@@ -164,13 +165,14 @@
     try { if (panel.matches(":popover-open")) panel.hidePopover(); } catch {}
     panel.hidden = true;
     state.active = null;
+    state.detail = null;
     state.sidebarSignature = "";
     hideTurns();
   }
 
   function acceptNote(note) {
-    if ((C.isArchive(note) || note?.schema === 1 && note.deletedAt)
-        && S.revision(note) >= S.revision(state.notes.get(note.id))) state.notes.set(note.id, note);
+    if (note?.conversation === state.key && (C.isArchive(note) || note.schema === 1 && note.deletedAt)
+        && S.revision(note) >= S.revision(state.notes.get(note.id))) state.notes.set(note.id, S.summarize(note));
   }
   async function storeRequest(request) {
     const response = await chrome.runtime.sendMessage({ type: CHANNEL + "store", ...request });
@@ -197,6 +199,7 @@
     entry.placement = "main";
     // The main conversation has the original. Release the stored rich snapshot.
     delete entry.answerDocument;
+    delete entry.hasStoredDocument;
     await saveNote(updated);
     if (note.conversation !== conversation()) return;
     if (state.recentArchive?.id === noteId) state.recentArchive = null;
@@ -271,6 +274,7 @@
       openPanel(linked.id);
       return;
     }
+    if (state.storageLoading || state.storageError) throw new Error(state.storageError || "收纳记录正在加载，请稍后再试。");
     if (streamingAnswer(messages) === answer || !reader.canArchive(answer)) {
       throw new Error("回答或图片尚未加载完成，请稍后再收纳。");
     }
@@ -377,6 +381,18 @@
     for (const node of hidden) if (!node.classList.contains(HIDDEN)) node.classList.add(HIDDEN);
     state.hiddenTurns = hidden;
   }
+  function readBackup(note) {
+    if (state.detail?.id === note.id && state.detail.revision === S.revision(note)) return state.detail;
+    const detail = { id: note.id, revision: S.revision(note), document: null, error: "" };
+    state.detail = detail;
+    storeRequest({ operation: "read", conversation: note.conversation, id: note.id }).then(({ note: saved }) => {
+      if (!C.isArchive(saved) || S.revision(saved) !== detail.revision || !entryOf(saved).answerDocument) throw new Error("这条备份内容已更新，请重新打开。");
+      detail.document = entryOf(saved).answerDocument;
+    }).catch(error => { detail.error = error.message; }).finally(() => {
+      if (state.detail === detail) { state.sidebarSignature = ""; schedule(); }
+    });
+    return detail;
+  }
   function renderSidebar() {
     const notes = archiveNotes();
     $("#count").textContent = String(notes.length);
@@ -389,7 +405,7 @@
     const entry = note && entryOf(note);
     const answer = entry && C.storedAnswer(entry, state.messages, optionsForNote(note));
     const native = answer && state.hiddenTurns.has(answer.turn) ? answer : null;
-    const signature = [state.key, state.active, state.query, ui.host.dataset.theme, state.hideLinked,
+    const signature = [state.key, state.active, state.query, ui.host.dataset.theme, state.hideLinked, state.storageLoading, state.storageError,
       note ? note.updatedAt : notes.map(item => item.id + ":" + item.updatedAt).join("|")].join(":");
     if (signature === state.sidebarSignature && state.nativeAnswer === native?.el) return;
     state.sidebarSignature = signature;
@@ -405,7 +421,8 @@
       nativeView.clear();
       const needle = C.normalize(state.query).toLowerCase();
       const filtered = notes.filter(item => C.normalize(entryOf(item).question + " " + entryOf(item).answer).toLowerCase().includes(needle));
-      if (!filtered.length) body.append(el("p", !state.key ? "打开一段 ChatGPT 对话。" : notes.length ? "没有找到匹配的问答。" : "在问句旁点击「收进侧栏」。", "empty"));
+      if (state.storageError || state.storageLoading) body.append(el("p", state.storageError || "正在读取收纳记录…", "empty"));
+      else if (!filtered.length) body.append(el("p", !state.key ? "打开一段 ChatGPT 对话。" : notes.length ? "没有找到匹配的问答。" : "在问句旁点击「收进侧栏」。", "empty"));
       for (const item of filtered) {
         const control = button("", () => openPanel(item.id), "directory-item");
         control.append(el("span", entryOf(item).question, "text"));
@@ -422,11 +439,16 @@
       if (!mounted) {
         nativeView.clear();
         backup.append(el("div", "收纳备份", "muted backup-label"));
-        if (R.hasContent(entry.answerDocument)) {
+        const detail = entry.hasStoredDocument && readBackup(note);
+        const documentBackup = entry.answerDocument || detail?.document;
+        if (R.hasContent(documentBackup)) {
           const rendered = el("div", null, "answer rich");
-          rendered.append(R.render(entry.answerDocument, document, { onOpenMedia: node => media.open(node) }));
+          rendered.append(R.render(documentBackup, document, { onOpenMedia: node => media.open(node) }));
           backup.append(rendered);
-        } else backup.append(el("div", entry.answer, "answer"));
+        } else {
+          if (entry.answer) backup.append(el("div", entry.answer, "answer"));
+          if (detail) backup.append(el("p", detail.error || "正在读取完整备份…", "empty"));
+        }
       }
     }
     body.scrollTop = scrollTop;
@@ -457,12 +479,41 @@
     catch (error) { toast("操作失败：" + error.message); }
     finally { control.disabled = false; }
   });
-  $("#export").addEventListener("click", () => {
-    const backup = { format: "gpt-answer-shelf-backup", version: 1, notes: archiveNotes() };
-    const url = URL.createObjectURL(new Blob([JSON.stringify(backup)], { type: "application/json;charset=utf-8" }));
-    const link = el("a"); link.href = url; link.download = "GPT回答收纳-" + new Date().toISOString().slice(0, 10) + ".json";
-    ui.root.append(link); link.click(); link.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  $("#export").addEventListener("click", async event => {
+    const control = event.currentTarget;
+    if (control.disabled || !state.key) return;
+    control.disabled = true;
+    const progress = state.exportProgress ||= { key: state.key, ids: archiveNotes().map(note => note.id), cursor: 0, part: 1 };
+    const header = '{"format":"gpt-answer-shelf-backup","version":1,"notes":[';
+    const chunks = [header];
+    let size = header.length + 2, cursor = progress.cursor;
+    try {
+      while (cursor < progress.ids.length) {
+        const { note } = await storeRequest({ operation: "read", conversation: progress.key, id: progress.ids[cursor] });
+        if (state.exportProgress !== progress) return;
+        if (C.isArchive(note) && !note.deletedAt && C.isArchived(entryOf(note))) {
+          const chunk = new Blob([(chunks.length > 1 ? "," : "") + JSON.stringify(note)]);
+          if (chunk.size + size > C.BACKUP_MAX_BYTES) {
+            if (chunks.length === 1) throw new Error("单条收纳超过 64 MB，无法导出为 JSON 备份。");
+            break;
+          }
+          size += chunk.size;
+          chunks.push(chunk);
+        }
+        cursor++;
+      }
+      const hasMore = cursor < progress.ids.length;
+      const suffix = hasMore || progress.part > 1 ? `-${progress.part}` : "";
+      const url = URL.createObjectURL(new Blob([...chunks, "]}"], { type: "application/json;charset=utf-8" }));
+      const link = el("a"); link.href = url; link.download = "GPT回答收纳-" + new Date().toISOString().slice(0, 10) + suffix + ".json";
+      ui.root.append(link); link.click(); link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+      progress.cursor = cursor;
+      progress.part++;
+      if (!hasMore) state.exportProgress = null;
+      control.textContent = hasMore ? "导出下一份" : "导出备份";
+    } catch (error) { toast("导出失败：" + error.message); }
+    finally { control.disabled = false; }
   });
   $("#import").addEventListener("click", () => $("#import-file").click());
   $("#import-file").addEventListener("change", async event => {
@@ -485,22 +536,58 @@
     if (event.key === "Escape" && !panel.hidden && !media.isOpen) closePanel();
   });
 
-  chrome.storage.onChanged.addListener((changes, area) => {
-    if (area !== "local") return;
-    for (const [key, change] of Object.entries(changes)) {
-      if (key.startsWith(PREFIX)) {
-        if (change.newValue) acceptNote(change.newValue);
-        else if (change.oldValue) state.notes.delete(change.oldValue.id);
-      }
-      if (key === PREFS && typeof change.newValue?.hideLinked === "boolean") state.hideLinked = change.newValue.hideLinked;
+  let notesRequest = 0, listing = false;
+  async function refreshNotes({ reset = false } = {}) {
+    const key = state.key, request = ++notesRequest;
+    if (reset) {
+      state.notes.clear();
+      state.detail = null;
+      state.storageError = "";
+      state.storageLoading = Boolean(key);
+      schedule();
     }
-    schedule();
-  });
-  try {
-    const saved = await chrome.storage.local.get(null);
-    for (const [key, note] of Object.entries(saved)) if (key.startsWith(PREFIX)) acceptNote(note);
-    if (typeof saved[PREFS]?.hideLinked === "boolean") state.hideLinked = saved[PREFS].hideLinked;
-  } catch (error) { toast("收纳存储暂不可用：" + error.message); }
+    listing = Boolean(key);
+    if (!key) return;
+    const current = () => request === notesRequest && key === conversation();
+    try {
+      const notes = [];
+      let after = null;
+      do {
+        const response = await storeRequest({ operation: "list", conversation: key, after });
+        if (!current()) return;
+        notes.push(...response.notes);
+        after = response.next;
+      } while (after);
+      state.notes.clear();
+      for (const note of notes) acceptNote(note);
+      state.storageError = "";
+    } catch (error) { if (current()) state.storageError = error.message; }
+    finally {
+      if (current()) { listing = false; state.storageLoading = false; schedule(); }
+    }
+  }
+  async function refreshNote(id) {
+    const key = state.key, request = notesRequest;
+    const current = () => request === notesRequest && key === conversation();
+    try {
+      const { note } = await storeRequest({ operation: "read", conversation: key, id, summary: true });
+      if (current()) acceptNote(note);
+    } catch (error) { if (current()) state.storageError = error.message; }
+    finally { if (current()) schedule(); }
+  }
+  function storageChanged(changes, area) {
+    if (area !== "local") return;
+    const preferences = changes[PREFS]?.newValue;
+    if (typeof preferences?.hideLinked === "boolean") {
+      state.hideLinked = preferences.hideLinked;
+      schedule();
+    }
+    const update = changes[S.CHANGE]?.newValue;
+    if (update && (!update.conversations || update.conversations.includes(state.key))) {
+      if (update.noteId && !listing && !state.storageError) void refreshNote(update.noteId);
+      else void refreshNotes({ reset: !update.conversations });
+    }
+  }
 
   function schedule() {
     if (!state.timer) state.timer = setTimeout(() => { state.timer = null; sync(); }, 160);
@@ -535,7 +622,10 @@
       closePanel({ restorePosition: false });
       state.key = key;
       state.query = "";
+      state.exportProgress = null;
+      $("#export").textContent = "导出备份";
       $("#search").value = "";
+      void refreshNotes({ reset: true });
     }
     state.messages = readMessages();
     observe();
@@ -554,6 +644,12 @@
   }, 700);
   window.addEventListener("popstate", schedule);
   window.addEventListener("resize", () => { if (!panel.hidden) positionCard(); schedule(); });
+  chrome.storage.onChanged.addListener(storageChanged);
+  try {
+    const saved = await chrome.storage.local.get(PREFS);
+    if (typeof saved[PREFS]?.hideLinked === "boolean") state.hideLinked = saved[PREFS].hideLinked;
+  } catch (error) { toast("收纳设置暂不可用：" + error.message); }
+  await refreshNotes({ reset: true });
   sync();
   runtime.inspect = () => ({
     uiMounted: ui.host.isConnected && Boolean($(".launcher").getClientRects().length),

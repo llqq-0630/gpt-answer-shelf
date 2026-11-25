@@ -69,3 +69,46 @@ test("failed storage commits preserve existing data and do not block later reque
   assert.equal((await store.request({ operation: "save", note: note(), expectedRevision: 0 })).note.revision, 1);
 });
 
+test("the shared limit counts UTF-8 bytes and a lower limit still allows shrinking records", async () => {
+  const storage = area(), store = S.create({ area: storage });
+  assert.equal((await store.request({ operation: "settings" })).settings.limitBytes, 1024 * S.MIB);
+  const large = note(); large.exchanges[0].answer = "图".repeat(400000);
+  const saved = (await store.request({ operation: "save", note: large, expectedRevision: 0 })).note;
+  assert.equal((await store.request({ operation: "settings" })).usedBytes, Buffer.byteLength(JSON.stringify(saved)));
+  assert.equal((await store.handle({ operation: "limit", bytes: -1 })).ok, false);
+  await store.request({ operation: "limit", bytes: S.MIB });
+  const restarted = S.create({ area: storage });
+  assert.equal((await restarted.request({ operation: "settings" })).settings.limitBytes, S.MIB);
+  const elsewhere = { ...note(), id: "elsewhere", conversation: "c:other" };
+  assert.equal((await restarted.handle({ operation: "save", note: elsewhere, expectedRevision: 0 })).code, "quota");
+  assert.deepEqual((await restarted.request({ operation: "read", conversation: large.conversation, id: large.id })).note, saved);
+  await restarted.request({ operation: "save", note: { ...saved, exchanges: note().exchanges }, expectedRevision: saved.revision });
+  assert.equal((await restarted.handle({ operation: "save", note: elsewhere, expectedRevision: 0 })).ok, true);
+});
+
+test("legacy notes are indexed once, and lists page within the conversation without sending rich snapshots", async () => {
+  const archives = [
+    { ...note(), id: "a", mode: "archive" }, { ...note(), id: "b", mode: "archive" },
+    { ...note(), id: "c", mode: "archive", conversation: "c:elsewhere" }
+  ];
+  for (const archive of archives) archive.exchanges[0] = { question: "Q", userText: "Q", answer: "", placement: "sidebar",
+    answerDocument: { version: 1, nodes: [{ text: "x".repeat(7 * S.MIB) }] } };
+  const storage = area(Object.fromEntries(archives.map(archive => [S.key(archive), archive])));
+  const originalGet = storage.get;
+  const reads = [];
+  storage.get = keys => { reads.push(keys); return originalGet(keys); };
+  const store = S.create({ area: storage });
+  const first = await store.request({ operation: "list", conversation: "c:test" });
+  assert.ok(first.next);
+  assert.deepEqual(first.notes.map(archive => archive.id), ["a"]);
+  const second = await store.request({ operation: "list", conversation: "c:test", after: first.next });
+  assert.deepEqual(second.notes.map(archive => archive.id), ["b"]);
+  assert.equal(second.next, null);
+  assert.equal(second.notes[0].exchanges[0].answerDocument, undefined);
+  assert.equal(require("../core.js").isArchived(second.notes[0].exchanges[0]), true);
+  const read = await store.request({ operation: "read", conversation: "c:test", id: "b" });
+  assert.deepEqual(read.note, archives[1]);
+  assert.equal(reads.filter(keys => keys === null).length, 1);
+  assert.equal(reads.some(keys => Array.isArray(keys) && keys.includes(S.key(archives[2]))), false);
+});
+

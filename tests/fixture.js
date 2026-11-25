@@ -11,7 +11,7 @@
     setTimeout(() => { render(); document.getElementById("preview-rebuild-state").textContent = "预览期间网页消息已重建"; }, 350);
   }, { capture: true });
   let store = JSON.parse(localStorage.getItem(fixtureKey("store")) || "{}");
-  const installedVersion = "0.2.15";
+  const installedVersion = "0.3.0";
   const listeners = [];
   const messageListeners = [];
   globalThis.chrome = {

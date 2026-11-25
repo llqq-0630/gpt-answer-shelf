@@ -1,15 +1,16 @@
 {
   "manifest_version": 3,
   "name": "GPT 回答收纳",
-  "version": "0.2.15",
+  "version": "0.3.0",
   "minimum_chrome_version": "114",
   "description": "保留主对话的问句，按需把回答收进侧栏或放回原位。",
-  "permissions": ["storage"],
+  "permissions": ["storage", "unlimitedStorage"],
   "background": { "service_worker": "background.js" },
   "action": {
     "default_title": "GPT 回答收纳",
     "default_popup": "popup.html"
   },
+  "options_ui": { "page": "options.html", "open_in_tab": true },
   "content_scripts": [{
     "matches": ["https://chatgpt.com/*", "https://chat.openai.com/*"],
     "js": ["rich.js", "media.js", "core.js", "storage.js", "messages.js", "navigation.js", "native-view.js", "reading.js", "panel.js", "styles.js", "content.js"],

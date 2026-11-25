@@ -10,6 +10,9 @@ function memoryArea(initial = {}, quota = Infinity) {
       const size = Object.entries(next).reduce((sum, [key, value]) => sum + key.length + Buffer.byteLength(JSON.stringify(value)), 0);
       if (size > quota) throw new Error("QUOTA_BYTES quota exceeded");
       values = next;
+    },
+    async remove(keys) {
+      for (const key of Array.isArray(keys) ? keys : [keys]) delete values[key];
     }
   };
 }

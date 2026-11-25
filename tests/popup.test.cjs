@@ -8,7 +8,7 @@ const version = require("../manifest.json").version;
 const code = fs.readFileSync(path.join(__dirname, "..", "popup.js"), "utf8");
 const flush = () => new Promise(resolve => setImmediate(resolve));
 async function popup(response, rejection) {
-  const nodes = new Map(["status", "open", "reload", "help", "version", "check", "diagnose", "diagnostic-report"].map(id => [id, {
+  const nodes = new Map(["status", "open", "reload", "help", "version", "check", "settings", "diagnose", "diagnostic-report"].map(id => [id, {
     textContent: "", disabled: false, hidden: false, listeners: {}, addEventListener(type, listener) { this.listeners[type] = listener; }
   }]));
   const calls = [];
@@ -16,7 +16,7 @@ async function popup(response, rejection) {
     document: { getElementById(id) { return nodes.get(id); } },
     window: { close() { calls.push("close"); } },
     chrome: {
-      runtime: { getManifest() { return { version }; } },
+      runtime: { getManifest() { return { version }; }, async openOptionsPage() { calls.push("settings"); } },
       tabs: {
         async query() { return [{ id: 42 }]; },
         async sendMessage(id, message) { calls.push([id, message.type]); if (rejection) throw rejection; return response; },
@@ -43,6 +43,8 @@ test("a missing content script offers refresh rather than claiming the page is r
   assert.match(nodes.get("status").textContent, /还没有加载收纳扩展/);
   assert.equal(nodes.get("open").disabled, true);
   assert.equal(nodes.get("reload").hidden, false);
+  await nodes.get("settings").listeners.click();
+  assert.deepEqual(calls.slice(-2), ["settings", "close"]);
   await nodes.get("reload").listeners.click();
   assert.deepEqual(calls.at(-1), [42, "reload"]);
 });
