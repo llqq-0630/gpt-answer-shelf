@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>存储设置 · GPT 回答收纳</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <main>
+    <header>
+      <p>GPT 回答收纳</p>
+      <h1>存储设置</h1>
+    </header>
+    <section aria-labelledby="capacity-title">
+      <h2 id="capacity-title">收纳容量</h2>
+      <p id="usage">正在读取用量…</p>
+      <progress id="meter" aria-label="收纳容量使用情况" hidden></progress>
+      <form id="limit-form">
+        <label for="limit">收纳上限</label>
+        <div class="row">
+          <div class="unit-field">
+            <input id="limit" type="number" min="1" step="1" inputmode="numeric" aria-describedby="limit-unit" required disabled>
+            <span id="limit-unit">MB</span>
+          </div>
+          <button id="save-limit" type="submit" disabled>保存上限</button>
+        </div>
+      </form>
+    </section>
+    <section aria-labelledby="location-title">
+      <h2 id="location-title">收纳位置</h2>
+      <p id="location">正在读取位置…</p>
+      <p class="hint" id="location-hint">选择文件夹后，扩展会迁移已有记录，并在其中创建专用子文件夹。</p>
+      <div class="row">
+        <button id="choose-folder" type="button" disabled>选择文件夹</button>
+        <button id="authorize" type="button" class="secondary" hidden>重新授权</button>
+        <button id="browser-storage" type="button" class="secondary" hidden>改用浏览器存储</button>
+      </div>
+    </section>
+    <p id="status" role="status"></p>
+  </main>
+  <script src="storage.js"></script>
+  <script src="file-storage.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>

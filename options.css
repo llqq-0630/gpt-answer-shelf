@@ -1,0 +1,48 @@
+:root {
+  color-scheme: light dark;
+  --page: #f6f7f9;
+  --surface: #fff;
+  --ink: #16191f;
+  --muted: #505864;
+  --line: #d9dde4;
+  --accent: #244ead;
+  --on-accent: #fff;
+  --warning: #923511;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --page: #14171d;
+    --surface: #1e232c;
+    --ink: #f2f4f8;
+    --muted: #b2bac8;
+    --line: #424a58;
+    --accent: #abc5ff;
+    --on-accent: #142447;
+    --warning: #ffb393;
+  }
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; background: var(--page); color: var(--ink); font: 15px/1.55 system-ui, "Segoe UI", "Microsoft YaHei", sans-serif; }
+main { width: min(100% - 36px, 620px); margin: 48px auto; }
+header { margin-bottom: 22px; }
+header p, .hint { color: var(--muted); }
+header p { margin: 0; }
+h1 { margin: 2px 0 0; font-size: 30px; }
+h2 { margin: 0; font-size: 19px; }
+section { margin: 14px 0; padding: 20px 24px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+section p { margin: 10px 0; overflow-wrap: anywhere; }
+#location { font-weight: 600; }
+.row { display: flex; flex-wrap: wrap; align-items: stretch; gap: 9px; margin-top: 10px; }
+progress { display: block; width: 100%; height: 10px; margin: 10px 0 16px; accent-color: var(--accent); }
+progress.over-limit { accent-color: var(--warning); }
+button, input { font: inherit; }
+button { padding: 7px 13px; border: 1px solid var(--accent); border-radius: 7px; background: var(--accent); color: var(--on-accent); cursor: pointer; }
+button.secondary { border-color: var(--line); background: var(--surface); color: var(--ink); }
+button:hover:not(:disabled) { filter: brightness(.93); }
+button:disabled { opacity: .58; cursor: default; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.unit-field { display: inline-flex; align-items: center; gap: 8px; padding-right: 10px; border: 1px solid var(--line); border-radius: 7px; color: var(--muted); }
+input { width: 105px; border: 0; border-radius: 7px; padding: 7px 9px; background: var(--surface); color: var(--ink); }
+#status { min-height: 1.6em; color: var(--muted); }
+#status[data-error="true"] { color: var(--warning); }
